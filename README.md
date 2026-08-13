@@ -16,6 +16,18 @@ Takes effect on your **next session (window, same below)** or **`/reload`**. Ple
 
 This extension follows Pi's runtime config directory. If you use a custom agent dir such as `~/.config/pi/agent` via `PI_CODING_AGENT_DIR`, pi-cc-header reads and writes the active `settings.json` there instead of assuming `~/.pi/agent`.
 
+If your Pi config is managed declaratively or lives on a read-only filesystem, set:
+
+```json
+{
+  "ccHeader": {
+    "readOnlyConfig": true
+  }
+}
+```
+
+With `ccHeader.readOnlyConfig=true`, the extension will not try to write `settings.json` at startup or when running header commands. Visual changes still apply for the current session, but they are not persisted, and `/hcl` becomes unavailable until you remove the flag declaratively.
+
 ## Features
 
 - 14-frame Pi logo animation, adjustable speed (25/50/75/100 ms)
@@ -74,6 +86,18 @@ pi install npm:pi-cc-header
 安装后在 **下一次会话（窗口，下同）** 或 **`/reload`** 生效。请务必完整阅读本文档，特别是[重置、禁用与卸载](#重置禁用与卸载)小节，以确保您正常使用本扩展。
 
 本扩展会跟随 Pi 当前实际使用的配置目录。如果您通过 `PI_CODING_AGENT_DIR` 使用 `~/.config/pi/agent` 之类的自定义 agent 目录，pi-cc-header 会在该目录下读写当前生效的 `settings.json`，不会再假定路径一定是 `~/.pi/agent`。
+
+如果您的 Pi 配置由 Nix / Home Manager 等声明式工具管理，或者配置目录本身是只读文件系统，请加入：
+
+```json
+{
+  "ccHeader": {
+    "readOnlyConfig": true
+  }
+}
+```
+
+启用 `ccHeader.readOnlyConfig=true` 后，扩展在启动和执行头部命令时都不会再尝试写入 `settings.json`。界面变更仍会在当前会话内生效，但不会持久化；同时 `/hcl` 也会不可用，需通过声明式配置移除该字段后再卸载。
 
 ## 功能
 
