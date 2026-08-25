@@ -14,12 +14,13 @@ import {
 	existsSync,
 	copyFileSync,
 	mkdirSync,
+	type Dirent,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
 /* ── 类型 ── */
-interface CCHeaderConfig extends Record<string, any> {
+interface CCHeaderConfig extends Record<string, unknown> {
 	readOnlyConfig?: boolean;
 }
 
@@ -89,12 +90,7 @@ const CMAP: Record<string, string> = {
 const GMAP: Record<string, string[]> = {
 	a: ["38;2;217;119;87", "38;2;200;100;70", "38;2;170;80;55", "38;2;130;60;40"],
 	r: ["38;2;255;80;80", "38;2;220;40;40", "38;2;180;20;20", "38;2;140;10;10"],
-	o: [
-		"38;2;255;170;50",
-		"38;2;230;140;30",
-		"38;2;200;110;20",
-		"38;2;160;80;10",
-	],
+	o: ["38;2;255;170;50", "38;2;230;140;30", "38;2;200;110;20", "38;2;160;80;10"],
 	y: [
 		"38;2;255;255;80",
 		"38;2;230;230;40",
@@ -391,6 +387,48 @@ function getRuntimePaths(cwd?: string) {
 	return buildRuntimePaths(getAgentDir(), cwd);
 }
 
+/* ── skill 发现（sync: 与 pi 的发现规则对齐——含 SKILL.md 的目录计为 skill；无 SKILL.md 的目录按分组目录递归展开；.md 需带 frontmatter 才算 skill，README.md/AGENTS.md 无 frontmatter 不计，pi #7805）── */
+function hasSkillFrontmatter(path: string): boolean {
+	try {
+		for (const line of readFileSync(path, "utf-8").split("\n")) {
+			if (line.trim() === "") continue;
+			return line.trim() === "---";
+		}
+	} catch {
+		console.warn("pi-cc-header: failed to read", path);
+	}
+	return false;
+}
+
+// ponytail: 深度上限防符号链接/深嵌套死循环；pi 实际只支持一层分组
+const MAX_SKILL_DIR_DEPTH = 6;
+export function collectSkillNames(
+	dir: string,
+	names: Set<string>,
+	depth: number,
+): void {
+	if (depth > MAX_SKILL_DIR_DEPTH) return;
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(dir, { withFileTypes: true });
+	} catch {
+		console.warn("pi-cc-header: failed to list skills dir", dir);
+		return;
+	}
+	for (const e of entries) {
+		if (e.isSymbolicLink()) continue;
+		if (e.isDirectory()) {
+			if (existsSync(join(dir, e.name, "SKILL.md"))) {
+				names.add(e.name);
+			} else {
+				collectSkillNames(join(dir, e.name), names, depth + 1);
+			}
+		} else if (e.name.endsWith(".md") && hasSkillFrontmatter(join(dir, e.name))) {
+			names.add(e.name);
+		}
+	}
+}
+
 /* ── 各项统计（tech-debt: 同步遍历 agentDir/npm/node_modules，包多时可能卡顿。cachedStats 保证每会话仅运行一次，后续可考虑 setImmediate 分片或 worker）── */
 function computeStats(ctx: ExtensionContext) {
 	const home = homedir();
@@ -422,9 +460,7 @@ function computeStats(ctx: ExtensionContext) {
 				if (!existsSync(d)) d = join(pkgDir, e.replace(/^(\.\.?\/)+/, ""));
 				if (existsSync(d)) {
 					try {
-						prompts += readdirSync(d).filter((f: string) =>
-							f.endsWith(".md"),
-						).length;
+						prompts += readdirSync(d).filter((f: string) => f.endsWith(".md")).length;
 					} catch {
 						console.warn("pi-cc-header: failed to read prompts dir", d);
 					}
@@ -456,10 +492,7 @@ function computeStats(ctx: ExtensionContext) {
 				try {
 					subs = readdirSync(join(root, name));
 				} catch {
-					console.warn(
-						"pi-cc-header: failed to list scoped packages under",
-						name,
-					);
+					console.warn("pi-cc-header: failed to list scoped packages under", name);
 					continue;
 				}
 				for (const sub of subs) {
@@ -493,13 +526,7 @@ function computeStats(ctx: ExtensionContext) {
 		paths.projectSkillsDir,
 	].filter((d): d is string => !!d)) {
 		if (!existsSync(d)) continue;
-		try {
-			for (const e of readdirSync(d, { withFileTypes: true })) {
-				if (e.isDirectory() || e.name.endsWith(".md")) skillNames.add(e.name);
-			}
-		} catch {
-			console.warn("pi-cc-header: failed to list skills dir", d);
-		}
+		collectSkillNames(d, skillNames, 0);
 	}
 
 	const globalAgents = existsSync(paths.globalAgentsPath);
@@ -625,8 +652,7 @@ class PiHeader implements Component {
 
 		const lines: string[] = [];
 		for (let i = 1; i < logoLines.length; i++) {
-			const right =
-				infoRows[i] != null ? padRight(infoRows[i], infoMaxWidth) : "";
+			const right = infoRows[i] == null ? "" : padRight(infoRows[i], infoMaxWidth);
 			lines.push(padRight(logoLines[i], logoWidth) + right);
 		}
 		return lines.map((l) => padRight(truncateToWidth(l, width, ""), width));
@@ -674,7 +700,7 @@ export const pick = <T>(
 	fallback: T,
 ): T => (guard(val) ? (val as T) : fallback);
 
-export function stateFromConfig(h: Record<string, any>): CCHeaderState {
+export function stateFromConfig(h: Record<string, unknown>): CCHeaderState {
 	return {
 		logoColorKey: pick(
 			h.color,
@@ -729,7 +755,7 @@ export function stateFromConfig(h: Record<string, any>): CCHeaderState {
 	};
 }
 
-function stateToConfig(): Record<string, any> {
+function stateToConfig(): Record<string, unknown> {
 	return {
 		color: state.logoColorKey,
 		ver: state.versionColored,
@@ -994,7 +1020,7 @@ export default function (pi: ExtensionAPI) {
 					s.ccHeader = h;
 					s.quietStartup = false;
 					s.clearOnStart = false;
-					const persisted = saveSettings(s);
+					const persisted = saveSettings(s) ? "saved" : "failed";
 					ctx.ui.notify(
 						withPersistenceNote(
 							"pi-cc-header: DISABLED. Takes effect next session. /htg to re-enable.",
@@ -1066,10 +1092,7 @@ export default function (pi: ExtensionAPI) {
 			if (args) {
 				const v = args.trim();
 				if (!["all", "pi", "off"].includes(v)) {
-					ctx.ui.notify(
-						`Invalid value: "${v}". Available: all, pi, off.`,
-						"error",
-					);
+					ctx.ui.notify(`Invalid value: "${v}". Available: all, pi, off.`, "error");
 					return;
 				}
 				updateState(
@@ -1130,8 +1153,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("hsp", {
-		description:
-			"Animation speed: no args = show; <number> = set (25 50 75 100)",
+		description: "Animation speed: no args = show; <number> = set (25 50 75 100)",
 		handler: async (args, ctx) => {
 			if (!args) {
 				ctx.ui.notify(

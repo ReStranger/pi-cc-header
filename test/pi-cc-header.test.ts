@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { homedir } from "node:os";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	pick,
@@ -11,6 +12,7 @@ import {
 	buildRuntimePaths,
 	MAX_SLOGAN_LENGTH,
 	configWritesEnabled,
+	collectSkillNames,
 } from "../extensions/pi-cc-header.ts";
 
 // ── pick ──
@@ -203,5 +205,90 @@ describe("formatCwd", () => {
 	it("returns path unchanged when not under home", () => {
 		const result = formatCwd("/tmp/somewhere");
 		assert.equal(result, "/tmp/somewhere");
+	});
+});
+
+// ── collectSkillNames ──
+describe("collectSkillNames", () => {
+	const makeRoot = () => mkdtempSync(join(tmpdir(), "cch-skills-"));
+
+	it("counts skill dirs containing SKILL.md", () => {
+		const root = makeRoot();
+		try {
+			mkdirSync(join(root, "alpha"));
+			writeFileSync(join(root, "alpha", "SKILL.md"), "---\nname: alpha\n---\n");
+			mkdirSync(join(root, "beta"));
+			writeFileSync(join(root, "beta", "SKILL.md"), "---\nname: beta\n---\n");
+			const names = new Set<string>();
+			collectSkillNames(root, names, 0);
+			assert.deepEqual([...names].sort(), ["alpha", "beta"]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("recurses into grouping dirs without SKILL.md", () => {
+		const root = makeRoot();
+		try {
+			mkdirSync(join(root, "group", "alpha"), { recursive: true });
+			writeFileSync(
+				join(root, "group", "alpha", "SKILL.md"),
+				"---\nname: alpha\n---\n",
+			);
+			mkdirSync(join(root, "group", "beta"), { recursive: true });
+			writeFileSync(
+				join(root, "group", "beta", "SKILL.md"),
+				"---\nname: beta\n---\n",
+			);
+			const names = new Set<string>();
+			collectSkillNames(root, names, 0);
+			assert.deepEqual([...names].sort(), ["alpha", "beta"]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("ignores dirs without SKILL.md and md without frontmatter", () => {
+		const root = makeRoot();
+		try {
+			mkdirSync(join(root, "empty"));
+			writeFileSync(join(root, "README.md"), "# readme\n");
+			writeFileSync(join(root, "notes.md"), "no frontmatter\n");
+			const names = new Set<string>();
+			collectSkillNames(root, names, 0);
+			assert.deepEqual([...names], []);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("counts md with frontmatter, including README.md", () => {
+		const root = makeRoot();
+		try {
+			writeFileSync(join(root, "tips.md"), "---\nname: tips\n---\nbody\n");
+			writeFileSync(join(root, "README.md"), "---\nname: readme-skill\n---\n");
+			const names = new Set<string>();
+			collectSkillNames(root, names, 0);
+			assert.deepEqual([...names].sort(), ["README.md", "tips.md"]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("bounds recursion depth", () => {
+		const root = makeRoot();
+		try {
+			let p = root;
+			for (let i = 0; i < 10; i++) {
+				p = join(p, `d${i}`);
+				mkdirSync(p);
+			}
+			writeFileSync(join(p, "SKILL.md"), "---\nname: deep\n---\n");
+			const names = new Set<string>();
+			collectSkillNames(root, names, 0);
+			assert.equal(names.size, 0); // 超出深度上限，最深 skill 不可达
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });
