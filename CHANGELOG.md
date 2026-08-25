@@ -4,6 +4,13 @@
 
 All notable changes to pi-cc-header.
 
+## v1.1.1 (2026-08-25)
+
+### Fixed
+
+- Skill counting now matches Pi's nested-skill discovery: directories without `SKILL.md` are treated as grouping directories and scanned recursively; only directories containing `SKILL.md` and Markdown files with valid frontmatter count as skills. Root `README.md`/`AGENTS.md` without frontmatter are no longer miscounted (Pi #7805).
+- Tightened config types: `Record<string, any>` → `Record<string, unknown>` in `CCHeaderConfig`, `stateFromConfig`, and `stateToConfig`; `/htg` disable now passes a proper `PersistResult` instead of a raw boolean.
+
 ## v1.1.0 (2026-08-21)
 
 ### Added
@@ -416,6 +423,13 @@ All notable changes to pi-cc-header.
 ---
 
 ## 中文
+
+## v1.1.1 (2026-08-25)
+
+### 修复
+
+- skills 统计对齐 Pi 的嵌套发现规则：无 `SKILL.md` 的目录按分组目录递归展开，仅含 `SKILL.md` 的目录与带 frontmatter 的 Markdown 文件计入；根目录无 frontmatter 的 `README.md`/`AGENTS.md` 不再误计（对应 Pi #7805）。
+- 收紧配置类型：`CCHeaderConfig`、`stateFromConfig`、`stateToConfig` 的 `Record<string, any>` 改为 `Record<string, unknown>`；`/htg` 禁用时改传正确的 `PersistResult` 而非裸 boolean。
 
 ## v1.1.0 (2026-08-21)
 
