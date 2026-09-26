@@ -8,6 +8,16 @@ import {
 	stateFromConfig,
 	colorCell,
 	logoCellColor,
+	piLogoRgb,
+	WHITE_CELLS,
+	PHASE5_CELLS,
+	gradientLevel,
+	PI_LOGO_RGB,
+	PI_TURQUOISE_RGB,
+	PI_REGION_SHADES,
+	shadesFromRgb,
+	accentOpenToRgb,
+	themeAccentShades,
 	formatCwd,
 	buildRuntimePaths,
 	MAX_SLOGAN_LENGTH,
@@ -94,6 +104,10 @@ describe("stateFromConfig", () => {
 		const s = stateFromConfig({ slogan: overlong });
 		assert.equal(s.slogan, "Code something that makes you proud");
 	});
+
+	it("color key pi: logo RGB + theme accent", () => {
+		assert.equal(stateFromConfig({ color: "pi" }).logoColorKey, "pi");
+	});
 });
 
 describe("configWritesEnabled", () => {
@@ -137,6 +151,13 @@ describe("colorCell", () => {
 		assert.equal(colorCell("white"), "\x1b[39m██");
 	});
 
+	it("renders fixed /hc pi region colors", () => {
+		assert.equal(colorCell("bowl"), "\x1b[38;2;240;144;130m██\x1b[39m");
+		assert.equal(colorCell("leg"), "\x1b[38;2;77;154;191m██\x1b[39m");
+		assert.equal(colorCell("piI"), "\x1b[38;2;241;190;88m██\x1b[39m");
+		assert.equal(colorCell("turquoise"), "\x1b[38;2;123;192;197m██\x1b[39m");
+	});
+
 	it("renders gradient l1 from default color map", () => {
 		const c = colorCell("l1");
 		assert.ok(c.includes("██"));
@@ -167,6 +188,212 @@ describe("logoCellColor", () => {
 	it("returns flash for flash frame", () => {
 		const flashFrame = { ...stillFrame, flash: true, white: false };
 		assert.equal(logoCellColor(flashFrame, 6, 3), "flash");
+	});
+});
+
+// ── logoCellColor: animation piece details (/hc pi → regions, CMAP → terminal palette) ──
+describe("logoCellColor animation piece details", () => {
+	// Active phases of moving pieces (ax/ay as in animation: 2/..., 2/..., 5/...)
+	const leftFrame = {
+		phase: 0,
+		active: "left" as const,
+		ax: 2,
+		ay: 2,
+		flash: false,
+		white: false,
+	};
+	const topFrame = { ...leftFrame, phase: 1, active: "top" as const };
+	const rightFrame = {
+		phase: 2,
+		active: "right" as const,
+		ax: 5,
+		ay: 2,
+		flash: false,
+		white: false,
+	};
+	// Final phase 5: pieces already align with the letter grid
+	const phase5 = { phase: 5, active: "none" as const, ax: 0, ay: 0, flash: false, white: false };
+
+	it("/hc pi colors pieces by logo regions", () => {
+		assert.equal(logoCellColor(leftFrame, 2, 2, "pi"), "leg"); // PIECE_LEFT (0,0)
+		assert.equal(logoCellColor(topFrame, 2, 2, "pi"), "bowl"); // PIECE_TOP (0,0)
+		assert.equal(logoCellColor(rightFrame, 2, 5, "pi"), "piI"); // PIECE_RIGHT (0,0)
+		// Early bottom line under Pi (phases 0..3: 6,1..6,4):
+		assert.equal(logoCellColor(leftFrame, 6, 1, "pi"), "turquoise");
+		assert.equal(logoCellColor(leftFrame, 6, 1, "c"), "orange");
+	});
+
+	it("/hc pi phase 5 matches letter grid (middle square (5,3) → leg)", () => {
+		assert.equal(logoCellColor(phase5, 5, 3, "pi"), "leg");
+		assert.equal(logoCellColor(phase5, 4, 2, "pi"), "leg");
+		assert.equal(logoCellColor(phase5, 5, 5, "pi"), "piI");
+		assert.equal(logoCellColor(phase5, 1, 1, "pi"), "panel"); // outside logo grid
+	});
+
+	it("CMAP modes keep terminal palette colors for pieces", () => {
+		assert.equal(logoCellColor(leftFrame, 2, 2, "c"), "red");
+		assert.equal(logoCellColor(topFrame, 2, 2, "c"), "cyan");
+		assert.equal(logoCellColor(rightFrame, 2, 5, "c"), "green");
+		// phase 5: raw P5_* without region mapping, (5,3) belongs to P5_RED
+		assert.equal(logoCellColor(phase5, 5, 3, "c"), "red");
+		assert.equal(logoCellColor(phase5, 1, 1, "c"), "panel");
+	});
+});
+
+// ── piLogoRgb (/hc pi: final frame region mapping, key `${y},${x}`) ──
+describe("piLogoRgb", () => {
+	it("maps Pi cells to logo regions", () => {
+		// P bowl: top row and right wall
+		assert.equal(piLogoRgb(3, 2), "bowl");
+		assert.equal(piLogoRgb(3, 4), "bowl");
+		assert.equal(piLogoRgb(4, 4), "bowl");
+		// P leg: stem (x=2) and middle square (5,3) (B / BB / B tetromino)
+		assert.equal(piLogoRgb(4, 2), "leg");
+		assert.equal(piLogoRgb(5, 2), "leg");
+		assert.equal(piLogoRgb(5, 3), "leg");
+		assert.equal(piLogoRgb(6, 2), "leg");
+		// I
+		assert.equal(piLogoRgb(5, 5), "piI");
+		assert.equal(piLogoRgb(6, 5), "piI");
+	});
+
+	it("assigns every logo cell to exactly one region without duplicates or gaps", () => {
+		// Full grid scan: exactly 10 cells, each mapped to a single region
+		const seen = new Map<string, string>();
+		for (let y = 1; y <= 7; y++) {
+			for (let x = 1; x <= 8; x++) {
+				const region = piLogoRgb(y, x);
+				const key = `${y},${x}`;
+				if (region === "panel") continue;
+				assert.equal(seen.has(key), false, `duplicate cell ${key}`);
+				seen.set(key, region);
+			}
+		}
+		assert.equal(seen.size, 10);
+		// Grid invariant: region mapping union == WHITE_CELLS (source of truth)
+		assert.deepEqual([...seen.keys()].sort(), [...WHITE_CELLS].sort());
+		for (const key of WHITE_CELLS) {
+			const [y, x] = key.split(",").map(Number);
+			assert.notEqual(piLogoRgb(y, x), "panel", `cell ${key} outside grid`);
+		}
+		assert.equal(piLogoRgb(1, 1), "panel");
+		const byRegion = (region: string) =>
+			[...seen.entries()].filter(([, r]) => r === region).map(([k]) => k).sort();
+		assert.deepEqual(byRegion("bowl"), ["3,2", "3,3", "3,4", "4,4"]);
+		assert.deepEqual(byRegion("leg"), ["4,2", "5,2", "5,3", "6,2"]);
+		assert.deepEqual(byRegion("piI"), ["5,5", "6,5"]);
+	});
+
+	it("final animation phase lights up exactly the logo cells", () => {
+		// P5_* animation piece sets and final letter layout are independent,
+		// but must cover the exact same cells — otherwise phase 5 would light up
+		// extra cells outside the logo or leave letters incomplete
+		assert.deepEqual([...PHASE5_CELLS].sort(), [...WHITE_CELLS].sort());
+	});
+});
+
+// ── PI_LOGO_RGB / PI_REGION_SHADES (fixed palette for /hc pi + /hm gradient) ──
+describe("PI_LOGO_RGB", () => {
+	it("holds the requested logo colors", () => {
+		assert.deepEqual(PI_LOGO_RGB, {
+			bowl: [240, 144, 130], // #f09082
+			leg: [77, 154, 191], // #4d9abf
+			piI: [241, 190, 88], // #f1be58
+		});
+		assert.deepEqual(PI_TURQUOISE_RGB, [123, 192, 197]); // #7bc0c5
+	});
+
+	it("derives 4 shades per region for the /hm gradient", () => {
+		assert.deepEqual(PI_REGION_SHADES.bowl, [
+			"38;2;240;144;130",
+			"38;2;209;125;113",
+			"38;2;178;107;96",
+			"38;2;144;86;78",
+		]);
+		for (const region of ["bowl", "leg", "piI"] as const) {
+			assert.equal(PI_REGION_SHADES[region].length, 4);
+			assert.equal(
+				PI_REGION_SHADES[region][0],
+				shadesFromRgb(PI_LOGO_RGB[region])[0],
+			);
+		}
+	});
+});
+
+// ── shadesFromRgb (/hm gradient baseline from base RGB) ──
+describe("shadesFromRgb", () => {
+	it("keeps level 0 equal to the base color", () => {
+		assert.equal(shadesFromRgb([122, 170, 255])[0], "38;2;122;170;255");
+	});
+
+	it("darkens monotonically across 4 levels", () => {
+		const shades = shadesFromRgb([122, 170, 255]);
+		assert.equal(shades.length, 4);
+		const parse = (s: string) =>
+			s.match(/38;2;(\d+);(\d+);(\d+)/)!.slice(1).map(Number);
+		const levels = shades.map(parse);
+		for (let i = 1; i < levels.length; i++) {
+			for (let c = 0; c < 3; c++) {
+				assert.ok(
+					levels[i][c] <= levels[i - 1][c],
+					`${shades[i]} should not be brighter than ${shades[i - 1]}`,
+				);
+			}
+		}
+	});
+});
+
+
+
+// ── gradientLevel (row gradient rule for GMAP/RGB_GMAP) ──
+describe("gradientLevel", () => {
+	it("maps rows to 4 shade levels", () => {
+		assert.equal(gradientLevel(1), 0);
+		assert.equal(gradientLevel(3), 0);
+		assert.equal(gradientLevel(4), 1);
+		assert.equal(gradientLevel(5), 2);
+		assert.equal(gradientLevel(6), 3);
+		assert.equal(gradientLevel(7), 3);
+	});
+});
+
+// ── accentOpenToRgb / themeAccentShades (/hc pi + /hm: theme accent gradient) ──
+describe("themeAccentShades", () => {
+	it("parses truecolor open code", () => {
+		assert.deepEqual(accentOpenToRgb("\x1b[38;2;100;150;200m"), [100, 150, 200]);
+	});
+
+	it("rejects non-truecolor and garbage", () => {
+		assert.equal(accentOpenToRgb("\x1b[38;5;129m"), null);
+		assert.equal(accentOpenToRgb("\x1b[39m"), null);
+		assert.equal(accentOpenToRgb(""), null);
+		assert.equal(accentOpenToRgb("\x1b[38;2;999;0;0m"), null);
+	});
+
+	it("builds 4 shades from theme accent", () => {
+		const shades = themeAccentShades({
+			getFgAnsi: () => "\x1b[38;2;100;150;200m",
+		});
+		assert.ok(shades !== null && shades.length === 4);
+		assert.equal(shades[0], "38;2;100;150;200");
+		// ×0.6 at the darkest level: 60;90;120
+		assert.equal(shades[3], "38;2;60;90;120");
+	});
+
+	it("falls back to null without truecolor accent", () => {
+		assert.equal(themeAccentShades({}), null);
+		assert.equal(
+			themeAccentShades({ getFgAnsi: () => "\x1b[38;5;129m" }),
+			null,
+		);
+		assert.equal(
+			themeAccentShades({
+				getFgAnsi: () => {
+					throw new Error("Unknown theme color");
+				},
+			}),
+			null,
+		);
 	});
 });
 

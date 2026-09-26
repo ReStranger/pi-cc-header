@@ -4,6 +4,17 @@
 
 All notable changes to pi-cc-header.
 
+## Unreleased
+
+### Changed
+
+- `/hc pi` now draws the logo with a fixed RGB palette instead of terminal-derived colors, so it looks identical in every theme and terminal: top `P` #f09082 (upper row and cup's right wall), stem `P` #4d9abf (including middle square), `I` #f1be58, and the bottom animation line #7bc0c5. The build-up animation pieces reuse the same three colors (each piece takes the color of the region it lands in), the white/orange flash frames stay a separate effect, and the `/hm` logo gradient is now computed from the fixed colors (4 brightness levels: 100% / 87% / 74% / 60%).
+- Accent elements in `pi` mode (IBM stripes, version label, slogan) still follow the Pi theme accent.
+
+### Removed
+
+- Removed the OSC 4 terminal palette query: the logo base colors and the `pi` gradient no longer depend on the terminal's ANSI palette (previously raw 36/31/32 and palette indices 1/2/6).
+
 ## v1.1.1 (2026-08-25)
 
 ### Fixed
@@ -424,7 +435,17 @@ All notable changes to pi-cc-header.
 
 ## 中文
 
-## v1.1.1 (2026-08-25)
+## Unreleased
+
+### 变更
+
+- `/hc pi` 的标志改用固定 RGB 调色板绘制，不再依赖终端颜色，在任何主题与终端下观感一致：上半部分 P 为 #f09082（顶行与右壁），腿 P 为 #4d9abf（含中间方块），`I` 为 #f1be58，底部动画横线为 #7bc0c5。组装动画的各部件沿用这三色（每个部件取其最终所属区域的颜色），末尾的白/橙闪光帧仍是独立效果，`/hm` 的标志渐变也改为由这些固定色计算（4 级亮度：100% / 87% / 74% / 60%）。
+- `pi` 模式下的强调元素（IBM 横线、版本号、标语）仍跟随 Pi 主题强调色。
+
+### 移除
+
+- 移除 OSC 4 终端调色板查询：标志基础色与 `pi` 渐变不再取自终端 ANSI 调色板（此前使用原始 36/31/32 及调色板索引 1/2/6）。
+
 
 ### 修复
 

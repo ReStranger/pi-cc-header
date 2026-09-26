@@ -33,7 +33,7 @@ interface SettingsFile {
 }
 
 interface CCHeaderState {
-	logoColorKey: string;
+	logoColorKey: string; // "pi"=fixed RGB logo + Pi theme accent; otherwise CMAP/GMAP key
 	versionColored: number; // 0=off 1=Pi only 2=Pi+ver
 	gradientOn: boolean;
 	stripeEnabled: boolean;
@@ -51,7 +51,9 @@ const LOGO_COLS = 8;
 const LOGO_ROWS = 7;
 const LOGO_PIXEL_WIDTH = 14; // 8×2 双宽字符，含左右 margin
 export const MAX_SLOGAN_LENGTH = 85;
-// sync: COLOR_NAMES 与 CMAP/GMAP 共享同一组颜色键，新增颜色需同步三处。
+// sync: COLOR_NAMES and CMAP/GMAP share the same set of color keys; new colors must sync across all 3.
+// Exception: "pi" has no entries in CMAP/GMAP; the logo uses fixed RGB (PI_LOGO_RGB),
+// and accent elements (stripes, version, slogan) follow the Pi theme via theme.fg("accent").
 const COLOR_NAMES: Record<string, string> = {
 	a: "anthropic",
 	c: "clawd",
@@ -62,8 +64,9 @@ const COLOR_NAMES: Record<string, string> = {
 	w: "white",
 	b: "blue",
 	p: "purple",
+	pi: "accent",
 };
-const DEFAULT_STATE: CCHeaderState = {
+export const DEFAULT_STATE: CCHeaderState = {
 	logoColorKey: "c",
 	versionColored: 1,
 	gradientOn: true,
@@ -130,9 +133,36 @@ const GRADIENT_LEVEL: Record<string, number> = {
 	s4: 3,
 };
 
+/* ── Fixed logo letter palette for /hc pi ──
+ * Previously piece colors came from the terminal palette (raw 36/31/32), and
+ * /hm queried the terminal again via OSC 4. Now these are three fixed RGB colors,
+ * identical across all themes and terminals: P bowl, P leg, and "I". Stripes,
+ * version label, and slogan still follow the theme accent (theme.fg("accent")). */
+export type PiRegion = "bowl" | "leg" | "piI";
+export const PI_LOGO_RGB: Record<PiRegion, Rgb> = {
+	bowl: [240, 144, 130], // #f09082 — top of P (bowl, right wall)
+	leg: [77, 154, 191], // #4d9abf — stem of P (including middle protrusion)
+	piI: [241, 190, 88], // #f1be58 — I
+};
+export const PI_TURQUOISE_RGB: Rgb = [123, 192, 197]; // #7bc0c5 — bottom animation line under Pi
+const piRegionOpen = (region: PiRegion): string =>
+	`38;2;${PI_LOGO_RGB[region].join(";")}`;
 /* ── 运行时状态（单一 state 对象，消除 11 个模块级 let）── */
 let state: CCHeaderState = { ...DEFAULT_STATE };
 let framesDirty = true; // 仅颜色/渐变/横线变化时置脏
+
+// Animation piece names (cyan/red/green — historically terminal palette colors
+// in CMAP modes) mapped to final letter regions for /hc pi.
+const PALETTE_TO_REGION = {
+	cyan: "bowl",
+	red: "leg",
+	green: "piI",
+} as const satisfies Record<string, PiRegion>;
+// Piece brush: /hc pi -> fixed RGB region, CMAP modes -> terminal palette color (36/31/32)
+const brush = (
+	palette: keyof typeof PALETTE_TO_REGION,
+	colorKey: string = state.logoColorKey,
+): LogoColor => (colorKey === "pi" ? PALETTE_TO_REGION[palette] : palette);
 
 /* ── Pi 官方 Logo 动画（提取自 pi.dev/install.sh）── */
 type LogoColor =
@@ -140,6 +170,10 @@ type LogoColor =
 	| "cyan"
 	| "red"
 	| "green"
+	| "bowl"
+	| "leg"
+	| "piI"
+	| "turquoise"
 	| "orange"
 	| "white"
 	| "flash"
@@ -215,6 +249,12 @@ export const colorCell = (color: LogoColor): string => {
 			return "\x1b[33m██\x1b[39m";
 		case "white":
 			return "\x1b[39m██";
+		case "turquoise":
+			return `\x1b[38;2;${PI_TURQUOISE_RGB.join(";")}m██\x1b[39m`;
+		case "bowl":
+		case "leg":
+		case "piI":
+			return `\x1b[${piRegionOpen(color)}m██\x1b[39m`;
 		case "logo":
 			return `\x1b[${CMAP[state.logoColorKey]}m██\x1b[39m`;
 		case "logoStripe":
@@ -232,26 +272,39 @@ export const colorCell = (color: LogoColor): string => {
 			return "  ";
 	}
 };
+/* ── Single source of truth for final letter layout in /hc pi ──
+ * key `${y},${x}` → region the cell belongs to in the final frame:
+ *   (3,2)(3,3)(3,4)(4,4)      — P bowl (top row + cup right wall)              → bowl
+ *   (4,2)(5,2)(5,3)(6,2)      — P leg (stem + middle square, B / BB / B)       → leg
+ *   (5,5)(6,5)                — "I"                                            → piI
+ * WHITE_CELLS (all logo cells) and piLogoRgb() are derived directly from this table. */
+const PI_CELL_REGION: Record<string, PiRegion> = {
+	"3,2": "bowl",
+	"3,3": "bowl",
+	"3,4": "bowl",
+	"4,4": "bowl",
+	"4,2": "leg",
+	"5,2": "leg",
+	"5,3": "leg",
+	"6,2": "leg",
+	"5,5": "piI",
+	"6,5": "piI",
+};
 // perf: 坐标字符串预解析为 Set/[number,number][]，消除热路径 split/map/Number 调用
-const WHITE_CELLS = new Set([
-	"3,2",
-	"3,3",
-	"3,4",
-	"4,2",
-	"4,4",
-	"5,2",
-	"5,3",
-	"5,5",
-	"6,2",
-	"6,5",
-]);
+export const WHITE_CELLS = new Set(Object.keys(PI_CELL_REGION));
 const P4_CYAN = new Set(["2,2", "2,3", "2,4", "3,4"]);
 const P4_RED = new Set(["3,2", "4,2", "4,3", "5,2"]);
 const P4_GREEN = new Set(["4,5", "5,5"]);
+// P5_* — last build-up phase layout from the official pi animation.
+// P5_CYAN matches "bowl", P5_RED matches "leg" (including (5,3)), P5_GREEN matches "piI".
+// The invariant "P5_* union == WHITE_CELLS" is enforced by tests.
 const P5_CYAN = new Set(["3,2", "3,3", "3,4", "4,4"]);
 const P5_RED = new Set(["4,2", "5,2", "5,3", "6,2"]);
 const P5_GREEN = new Set(["5,5", "6,5"]);
-const EARLY_ORANGE = new Set(["6,1", "6,2", "6,3", "6,4"]);
+export const PHASE5_CELLS = new Set([...P5_CYAN, ...P5_RED, ...P5_GREEN]);
+// Bottom line under Pi during build-up phases 0..3:
+// in /hc pi mode rendered as turquoise #7bc0c5, in CMAP modes as ANSI 33 (orange)
+const EARLY_LINE = new Set(["6,1", "6,2", "6,3", "6,4"]);
 const LATE_GREEN = new Set(["4,5", "5,5", "6,5", "6,6"]);
 const PIECE_LEFT: [number, number][] = [
 	[0, 0],
@@ -272,10 +325,72 @@ const PIECE_RIGHT: [number, number][] = [
 	[2, 1],
 ];
 
+export function piLogoRgb(y: number, x: number): PiRegion | "panel" {
+	return PI_CELL_REGION[`${y},${x}`] ?? "panel"; // "panel" unreachable for Pi cells
+}
+
+const isStripeCell = (y: number, x: number): boolean =>
+	state.stripeEnabled && y >= 2 && y <= LOGO_ROWS && x <= 6;
+
+// Row gradient level — single source of truth for GMAP/RGB_GMAP rules
+// (used in logoCellColor as gradientLevel(y)+1 due to l1..l4/s1..s4)
+export const gradientLevel = (y: number): number => {
+	if (y <= 3) return 0;
+	if (y === 4) return 1;
+	if (y === 5) return 2;
+	return 3;
+};
+
+type Rgb = [number, number, number];
+// Light→dark brightness multipliers for gradients, matching GMAP
+const SHADE_FACTORS = [1, 0.87, 0.74, 0.6] as const;
+
+// 4 light→dark gradient shade codes from a base RGB
+export const shadesFromRgb = (rgb: Rgb): string[] =>
+	SHADE_FACTORS.map(
+		(f) =>
+			`38;2;${Math.round(rgb[0] * f)};${Math.round(rgb[1] * f)};${Math.round(rgb[2] * f)}`,
+	);
+
+// 4 light→dark gradient shade codes for /hc pi letters — from the fixed palette
+export const PI_REGION_SHADES: Record<PiRegion, string[]> = {
+	bowl: shadesFromRgb(PI_LOGO_RGB.bowl),
+	leg: shadesFromRgb(PI_LOGO_RGB.leg),
+	piI: shadesFromRgb(PI_LOGO_RGB.piI),
+};
+
+// theme.getFgAnsi("accent") returns a raw opening ANSI sequence. Parse only
+// truecolor (38;2;r;g;b): 24-bit gradients cannot be emulated on 256-color
+// terminals, so themeAccentShades returns null and stripes fall back to flat
+// theme.fg("accent")
+export function accentOpenToRgb(open: string): Rgb | null {
+	const m = open.match(/38;2;(\d{1,3});(\d{1,3});(\d{1,3})/);
+	if (!m) return null;
+	const rgb: Rgb = [+m[1], +m[2], +m[3]];
+	return rgb.every((v) => v >= 0 && v <= 255) ? rgb : null;
+}
+
+// 4 stripe gradient shade codes for /hc pi + /hm; null = unavailable (no getFgAnsi
+// in older Pi, accent not truecolor) → flat theme.fg("accent")
+export function themeAccentShades(theme: {
+	getFgAnsi?: (name: string) => string;
+}): string[] | null {
+	try {
+		const open = theme.getFgAnsi?.("accent");
+		if (!open) return null;
+		const rgb = accentOpenToRgb(open);
+		if (!rgb) return null;
+		return shadesFromRgb(rgb);
+	} catch {
+		return null;
+	}
+}
+
 export function logoCellColor(
 	frame: LogoFrame,
 	y: number,
 	x: number,
+	colorKey: string = state.logoColorKey,
 ): LogoColor {
 	const key = `${y},${x}`;
 
@@ -286,52 +401,56 @@ export function logoCellColor(
 		frame.active === "left" &&
 		PIECE_LEFT.some(([dy, dx]) => y === frame.ay + dy && x === frame.ax + dx)
 	)
-		return "red";
+		return brush("red", colorKey);
 	if (
 		frame.active === "top" &&
 		PIECE_TOP.some(([dy, dx]) => y === frame.ay + dy && x === frame.ax + dx)
 	)
-		return "cyan";
+		return brush("cyan", colorKey);
 	if (
 		frame.active === "right" &&
 		PIECE_RIGHT.some(([dy, dx]) => y === frame.ay + dy && x === frame.ax + dx)
 	)
-		return "green";
+		return brush("green", colorKey);
 
+	if (frame.phase === 6 && colorKey === "pi") {
+		// Special /hc pi mode: Pi uses animation RGB colors; theme accent
+		// stripes are rendered live in PiHeader.piModeLines, treated as panel here
+		if (WHITE_CELLS.has(key)) return piLogoRgb(y, x);
+		return "panel";
+	}
 	if (frame.phase === 6) {
 		const isPi = WHITE_CELLS.has(key);
-		const lvl = state.gradientOn
-			? y <= 3
-				? 1
-				: y === 4
-					? 2
-					: y === 5
-						? 3
-						: 4
-			: 0;
+		const lvl = state.gradientOn ? gradientLevel(y) + 1 : 0;
 		if (isPi) return lvl > 0 ? (("l" + lvl) as LogoColor) : "logo";
-		return state.stripeEnabled && y >= 2 && y <= LOGO_ROWS && x <= 6
+		return isStripeCell(y, x)
 			? lvl > 0
 				? (("s" + lvl) as LogoColor)
 				: "logoStripe"
 			: "panel";
 	}
 	if (frame.phase === 4) {
-		if (P4_CYAN.has(key)) return "cyan";
-		if (P4_RED.has(key)) return "red";
-		if (P4_GREEN.has(key)) return "green";
+		if (P4_CYAN.has(key)) return brush("cyan", colorKey);
+		if (P4_RED.has(key)) return brush("red", colorKey);
+		if (P4_GREEN.has(key)) return brush("green", colorKey);
 		return "panel";
 	}
 	if (frame.phase >= 5) {
-		if (P5_CYAN.has(key)) return "cyan";
-		if (P5_RED.has(key)) return "red";
-		if (P5_GREEN.has(key)) return "green";
+		// /hc pi: final build-up pieces already match the final letter grid
+		if (colorKey === "pi") {
+			const region = piLogoRgb(y, x);
+			if (region !== "panel") return region;
+		}
+		if (P5_CYAN.has(key)) return brush("cyan", colorKey);
+		if (P5_RED.has(key)) return brush("red", colorKey);
+		if (P5_GREEN.has(key)) return brush("green", colorKey);
 		return "panel";
 	}
-	if (frame.phase <= 3 && EARLY_ORANGE.has(key)) return "orange";
-	if (frame.phase >= 2 && P4_CYAN.has(key)) return "cyan";
-	if (frame.phase >= 1 && P4_RED.has(key)) return "red";
-	if (frame.phase >= 3 && LATE_GREEN.has(key)) return "green";
+	if (frame.phase <= 3 && EARLY_LINE.has(key))
+		return colorKey === "pi" ? "turquoise" : "orange";
+	if (frame.phase >= 2 && P4_CYAN.has(key)) return brush("cyan", colorKey);
+	if (frame.phase >= 1 && P4_RED.has(key)) return brush("red", colorKey);
+	if (frame.phase >= 3 && LATE_GREEN.has(key)) return brush("green", colorKey);
 	return "panel";
 }
 
@@ -596,8 +715,13 @@ class PiHeader implements Component {
 	render(width: number): string[] {
 		const theme = this.ctx.ui.theme;
 		const muted = (s: string) => theme.fg("muted", s);
+		const accent = (s: string) => theme.fg("accent", s);
+		const isPiMode = state.logoColorKey === "pi";
 
-		const logoLines = PRECOMPUTED_LOGO_FRAMES[this.frame];
+		const logoLines =
+			isPiMode && this.frame === LAST_FRAME_INDEX
+				? this.piModeLines(theme)
+				: PRECOMPUTED_LOGO_FRAMES[this.frame];
 		const logoWidth = LOGO_PIXEL_WIDTH;
 		const infoMaxWidth = Math.max(0, width - LOGO_PIXEL_WIDTH);
 		// 性能: info 面板缓存——动画帧仅做拼接，不重算 padRight/truncateToWidth/visibleWidth
@@ -619,9 +743,13 @@ class PiHeader implements Component {
 
 			const piText =
 				state.versionColored >= 2
-					? `\x1b[${CMAP[state.logoColorKey]}mPi v${VERSION}\x1b[39m`
+					? isPiMode
+						? accent(`Pi v${VERSION}`)
+						: `\x1b[${CMAP[state.logoColorKey]}mPi v${VERSION}\x1b[39m`
 					: state.versionColored >= 1
-						? `\x1b[${CMAP[state.logoColorKey]}mPi\x1b[39m ${muted(`v${VERSION}`)}`
+						? isPiMode
+							? `${accent("Pi")} ${muted(`v${VERSION}`)}`
+							: `\x1b[${CMAP[state.logoColorKey]}mPi\x1b[39m ${muted(`v${VERSION}`)}`
 						: muted(`Pi v${VERSION}`);
 			const modelLine = `${model} · ${effort}${this.stats.agents ? `  |  ${this.stats.agents}` : ""}`;
 
@@ -635,7 +763,9 @@ class PiHeader implements Component {
 				? {
 						2: piText,
 						3: state.sloganColor
-							? `\x1b[1m\x1b[${CMAP[state.logoColorKey]}m${sloganText}\x1b[39m\x1b[22m`
+							? isPiMode
+								? accent(`\x1b[1m${sloganText}\x1b[22m`)
+								: `\x1b[1m\x1b[${CMAP[state.logoColorKey]}m${sloganText}\x1b[39m\x1b[22m`
 							: muted(`\x1b[1m${sloganText}\x1b[22m`),
 						4: muted(modelLine),
 						5: muted(statsLine),
@@ -656,6 +786,41 @@ class PiHeader implements Component {
 			lines.push(padRight(logoLines[i], logoWidth) + right);
 		}
 		return lines.map((l) => padRight(truncateToWidth(l, width, ""), width));
+	}
+
+	/** /hc pi: live final frame — Pi in fixed RGB palette, stripes in theme accent.
+	 * /hi toggles stripes; /hm applies Minecraft gradient: letters take region
+	 * shades (PI_REGION_SHADES), stripes take theme accent shades (null → flat accent). */
+	piModeLines(theme: ExtensionContext["ui"]["theme"]): string[] {
+		const stripeShades = state.gradientOn ? themeAccentShades(theme) : null;
+		const lines: string[] = [];
+		for (let y = 1; y <= LOGO_ROWS; y++) {
+			let line = "";
+			const lvl = gradientLevel(y);
+			for (let x = 1; x <= LOGO_COLS; x++) {
+				const k = `${y},${x}`;
+				if (WHITE_CELLS.has(k)) {
+					const region = piLogoRgb(y, x);
+					const shades =
+						state.gradientOn && region !== "panel"
+							? PI_REGION_SHADES[region]
+							: null;
+					line +=
+						shades !== null
+							? `\x1b[${shades[lvl]}m██\x1b[39m`
+							: colorCell(region);
+				} else if (isStripeCell(y, x)) {
+					line +=
+						stripeShades !== null
+							? `\x1b[${stripeShades[lvl]}m──\x1b[39m`
+							: theme.fg("accent", "──");
+				} else {
+					line += "  ";
+				}
+			}
+			lines.push(line);
+		}
+		return lines;
 	}
 
 	invalidate(): void {}
@@ -704,7 +869,7 @@ export function stateFromConfig(h: Record<string, unknown>): CCHeaderState {
 	return {
 		logoColorKey: pick(
 			h.color,
-			(v) => !!CMAP[v as string],
+			(v) => v === "pi" || !!CMAP[v as string],
 			DEFAULT_STATE.logoColorKey,
 		),
 		versionColored: pick(
@@ -816,7 +981,7 @@ function updateState(
 	const msg = updater(state);
 	if (msg === null) return; // null = 中止（已自行 notify 错误）
 
-	// 脏标记：仅颜色/渐变/横线变化需要重算帧
+	// 脏标记：仅颜色/渐变/RGB/横线变化需要重算帧
 	if (
 		(!skipFrames && state.logoColorKey !== prevColor) ||
 		state.gradientOn !== prevGrad ||
@@ -1055,7 +1220,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerCommand("hc", {
 		description:
-			"Header color: <code> = set (c a r o y g w b p); no args = show color key",
+			"Header color: <code> = set (c a r o y g w b p pi); no args = show color key",
 		handler: async (args, ctx) => {
 			if (!args) {
 				ctx.ui.notify(
@@ -1072,15 +1237,15 @@ export default function (pi: ExtensionAPI) {
 				ctx,
 				(msg) => reapply(pi, ctx, readSettings(settingsPath), msg),
 				(s) => {
-					if (!CMAP[args]) {
+					if (!CMAP[args] && args !== "pi") {
 						ctx.ui.notify(
-							`Invalid color: "${args}". Available: ${Object.keys(CMAP).join(" ")}`,
+							`Invalid color: "${args}". Available: ${Object.keys(COLOR_NAMES).join(" ")}`,
 							"error",
 						);
 						return null;
 					}
 					s.logoColorKey = args;
-					return `Color: ${args}`;
+					return args === "pi" ? "Color: pi (logo RGB + theme accent)" : `Color: ${args}`;
 				},
 			);
 		},

@@ -34,8 +34,10 @@ With `ccHeader.readOnlyConfig=true`, the extension will not try to write `settin
 
 - 14-frame Pi logo animation, adjustable speed (25/50/75/100 ms)
 - 9-color palette: Anthropic brand orange, Clawd crab red, and more
+- `pi` color mode (`/hc pi`): the logo uses a fixed RGB palette that is identical in every theme and terminal — top `P` #f09082 (RGB 240;144;130) for the upper row and the cup's right wall, stem `P` #4d9abf (RGB 77;154;191) including the middle square (B / BB / B), `I` #f1be58 (RGB 241;190;88), and the bottom animation line #7bc0c5 (RGB 123;192;197); the build-up animation draws its pieces from those same colors by the region each piece ends up in, while the flash frames (white full-logo flash, orange bottom-row flash) stay a separate effect, and the Minecraft gradient is computed from them (4 brightness levels: 100% / 87% / 74% / 60%). Accent elements (IBM stripes, version label, slogan) still follow the Pi theme accent — stripe shades are derived from the theme accent in truecolor, plain accent otherwise
 - IBM-style horizontal stripes
 - Minecraft-style pixel theme and 4-level 24-bit true-color gradient
+- All other color modes (`a c r o y g w b p`) draw their logo letters and stripes from the internal CMAP/GMAP palette
 - Version number coloring
 - Startup status bar: version, model, thinking level, skills (with pkg skills count), prompts, extensions (with uninstalled extension residue marker), cwd, and AGENTS.md state marker
 - Customizable slogan displayed in the header
@@ -46,7 +48,7 @@ With `ccHeader.readOnlyConfig=true`, the extension will not try to write `settin
 
 | Command | Description | Takes effect |
 | --- | --- | --- |
-| `/hc c/a/r/o/y/g/w/b/p` / `/hc` | Set logo color or show current with color key table | Immediate |
+| `/hc c/a/r/o/y/g/w/b/p/pi` / `/hc` | Set logo color (`pi` = fixed logo RGB #f09082 / #4d9abf / #f1be58 + theme accent) or show current with color key table | Immediate |
 | `/hi` | Toggle IBM-style on/off | Immediate |
 | `/hm` | Toggle Minecraft-style on/off | Immediate |
 | `/hsp` <ms> / `/hsp` | Set / show animation speed (25/50/75/100) | Immediate |
@@ -109,8 +111,10 @@ pi install npm:pi-cc-header
 
 - 14 帧 Pi logo 动画，动画速度可调（25/50/75/100 ms）
 - 九色调色板：Anthropic 品牌橙、Clawd 螃蟹红等
+- `pi` 配色（`/hc pi`）：标志使用固定 RGB 调色板，在任何主题与终端下完全一致 —— 上半部分 P 为 #f09082（RGB 240;144;130，用于顶行与右壁），腿 P 为 #4d9abf（RGB 77;154;191，含中间方块），`I` 为 #f1be58（RGB 241;190;88），底部动画横线为 #7bc0c5（RGB 123;192;197）；组装动画中各零件按其最终归属区域取自同样这些颜色，白色整灯闪烁与橙色底排闪烁仍是独立效果，Minecraft 渐变也由这些固定色计算（4 级亮度：100% / 87% / 74% / 60%）。强调元素（IBM 横线、版本号、标语）仍跟随 Pi 主题强调色 —— truecolor 下横线渐变由主题强调色推导，否则为平面强调色
 - IBM 风格水平横线
 - Minecraft 风格像素主题，4 级 24-bit 真彩色渐变
+- 其余配色（`a c r o y g w b p`）的标志字母与横线取自内部 CMAP/GMAP 调色板
 - 版本号颜色设定
 - 启动状态栏：版本、模型、思考级别、技能统计（含随包 skills 统计）、提示词模板统计、扩展统计（含已卸载扩展残留标记）、当前目录，以及 AGENTS.md 状态标记
 - 可定制标语
@@ -121,7 +125,7 @@ pi install npm:pi-cc-header
 
 | 命令 | 说明 | 生效方式 |
 | --- | --- | --- |
-| `/hc c/a/r/o/y/g/w/b/p` / `/hc` | 设置 logo 颜色或显示当前颜色及色键表 | 即时生效 |
+| `/hc c/a/r/o/y/g/w/b/p/pi` / `/hc` | 设置 logo 颜色（`pi` = 固定 RGB 标志 #f09082 / #4d9abf / #f1be58 + 主题强调色）或显示当前颜色及色键表 | 即时生效 |
 | `/hi` | 开关 IBM 横线 | 即时生效 |
 | `/hm` | 开关 Minecraft 风格 | 即时生效 |
 | `/hsp` <ms> / `/hsp` | 设置 / 显示动画速度（25/50/75/100） | 即时生效 |
