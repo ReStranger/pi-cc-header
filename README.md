@@ -34,8 +34,10 @@ With `ccHeader.readOnlyConfig=true`, the extension will not try to write `settin
 
 - 14-frame Pi logo animation, adjustable speed (25/50/75/100 ms)
 - 9-color palette: Anthropic brand orange, Clawd crab red, and more
+- `pi` color mode (`/hc pi`): logo keeps animation RGB colors, accent (stripes, version, slogan) follows Pi theme accent — IBM stripes and Minecraft gradient apply (stripe shades derived from theme accent in truecolor)
 - IBM-style horizontal stripes
 - Minecraft-style pixel theme and 4-level 24-bit true-color gradient
+- In `pi` mode the logo gradient is built from the terminal's own ANSI palette, queried once via OSC 4 (colors 1/2/6); terminals that do not answer fall back to plain ANSI colors
 - Version number coloring
 - Startup status bar: version, model, thinking level, skills (with pkg skills count), prompts, extensions (with uninstalled extension residue marker), cwd, and AGENTS.md state marker
 - Customizable slogan displayed in the header
@@ -46,7 +48,7 @@ With `ccHeader.readOnlyConfig=true`, the extension will not try to write `settin
 
 | Command | Description | Takes effect |
 | --- | --- | --- |
-| `/hc c/a/r/o/y/g/w/b/p` / `/hc` | Set logo color or show current with color key table | Immediate |
+| `/hc c/a/r/o/y/g/w/b/p/pi` / `/hc` | Set logo color (`pi` = logo RGB + theme accent) or show current with color key table | Immediate |
 | `/hi` | Toggle IBM-style on/off | Immediate |
 | `/hm` | Toggle Minecraft-style on/off | Immediate |
 | `/hsp` <ms> / `/hsp` | Set / show animation speed (25/50/75/100) | Immediate |
@@ -109,8 +111,10 @@ pi install npm:pi-cc-header
 
 - 14 帧 Pi logo 动画，动画速度可调（25/50/75/100 ms）
 - 九色调色板：Anthropic 品牌橙、Clawd 螃蟹红等
+- `pi` 配色（`/hc pi`）：标志保持动画 RGB 颜色，强调色（条纹、版本、标语）跟随 Pi 主题强调色，IBM 横线与 Minecraft 渐变生效（truecolor 下条纹渐变由主题强调色推导）
 - IBM 风格水平横线
 - Minecraft 风格像素主题，4 级 24-bit 真彩色渐变
+- 在 `pi` 模式下，标志渐变取自终端自身的 ANSI 调色板，通过 OSC 4（颜色 1/2/6）一次性查询；不响应的终端回退为普通 ANSI 颜色
 - 版本号颜色设定
 - 启动状态栏：版本、模型、思考级别、技能统计（含随包 skills 统计）、提示词模板统计、扩展统计（含已卸载扩展残留标记）、当前目录，以及 AGENTS.md 状态标记
 - 可定制标语
@@ -121,7 +125,7 @@ pi install npm:pi-cc-header
 
 | 命令 | 说明 | 生效方式 |
 | --- | --- | --- |
-| `/hc c/a/r/o/y/g/w/b/p` / `/hc` | 设置 logo 颜色或显示当前颜色及色键表 | 即时生效 |
+| `/hc c/a/r/o/y/g/w/b/p/pi` / `/hc` | 设置 logo 颜色（`pi` = RGB 标志 + 主题强调色）或显示当前颜色及色键表 | 即时生效 |
 | `/hi` | 开关 IBM 横线 | 即时生效 |
 | `/hm` | 开关 Minecraft 风格 | 即时生效 |
 | `/hsp` <ms> / `/hsp` | 设置 / 显示动画速度（25/50/75/100） | 即时生效 |

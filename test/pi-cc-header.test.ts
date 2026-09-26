@@ -8,6 +8,12 @@ import {
 	stateFromConfig,
 	colorCell,
 	logoCellColor,
+	piLogoRgb,
+	gradientLevel,
+	scanOsc4,
+	shadesFromRgb,
+	accentOpenToRgb,
+	themeAccentShades,
 	formatCwd,
 	buildRuntimePaths,
 	MAX_SLOGAN_LENGTH,
@@ -94,6 +100,10 @@ describe("stateFromConfig", () => {
 		const s = stateFromConfig({ slogan: overlong });
 		assert.equal(s.slogan, "Code something that makes you proud");
 	});
+
+	it("color key pi: logo RGB + theme accent", () => {
+		assert.equal(stateFromConfig({ color: "pi" }).logoColorKey, "pi");
+	});
 });
 
 describe("configWritesEnabled", () => {
@@ -167,6 +177,168 @@ describe("logoCellColor", () => {
 	it("returns flash for flash frame", () => {
 		const flashFrame = { ...stillFrame, flash: true, white: false };
 		assert.equal(logoCellColor(flashFrame, 6, 3), "flash");
+	});
+});
+
+// ── piLogoRgb (/hc pi: P5-раскладка финала анимации, key `${y},${x}`) ──
+describe("piLogoRgb", () => {
+	it("maps Pi cells to animation colors", () => {
+		assert.equal(piLogoRgb(3, 2), "cyan");
+		assert.equal(piLogoRgb(4, 4), "cyan");
+		assert.equal(piLogoRgb(4, 2), "red");
+		assert.equal(piLogoRgb(6, 2), "red");
+		assert.equal(piLogoRgb(5, 5), "green");
+		assert.equal(piLogoRgb(6, 5), "green");
+	});
+
+	it("covers all 10 Pi cells, panel elsewhere", () => {
+		const piCells: [number, number][] = [
+			[3, 2],
+			[3, 3],
+			[3, 4],
+			[4, 2],
+			[4, 4],
+			[5, 2],
+			[5, 3],
+			[5, 5],
+			[6, 2],
+			[6, 5],
+		];
+		for (const [y, x] of piCells) assert.notEqual(piLogoRgb(y, x), "panel");
+		assert.equal(piLogoRgb(1, 1), "panel");
+	});
+});
+
+// ── shadesFromRgb / parseOsc4Response (база градиента /hc pi из палитры терминала) ──
+describe("shadesFromRgb", () => {
+	it("keeps level 0 equal to the base color", () => {
+		assert.equal(shadesFromRgb([122, 170, 255])[0], "38;2;122;170;255");
+	});
+
+	it("darkens monotonically across 4 levels", () => {
+		const shades = shadesFromRgb([122, 170, 255]);
+		assert.equal(shades.length, 4);
+		const parse = (s: string) =>
+			s.match(/38;2;(\d+);(\d+);(\d+)/)!.slice(1).map(Number);
+		const levels = shades.map(parse);
+		for (let i = 1; i < levels.length; i++) {
+			for (let c = 0; c < 3; c++) {
+				assert.ok(
+					levels[i][c] <= levels[i - 1][c],
+					`${shades[i]} should not be brighter than ${shades[i - 1]}`,
+				);
+			}
+		}
+	});
+});
+
+// ── scanOsc4 (чанки ввода: вырезаем ответы OSC 4, не теряя клавиши) ──
+describe("scanOsc4", () => {
+	const cyan = "\x1b]4;6;rgb:7a7a/aaaa/ffff\x07";
+
+	it("parses 16-bit channels with BEL terminator", () => {
+		assert.deepEqual(scanOsc4(cyan, "").found, [
+			{ index: 6, rgb: [122, 170, 255] },
+		]);
+	});
+
+	it("parses 8-bit channels with ST terminator", () => {
+		assert.deepEqual(scanOsc4("\x1b]4;1;rgb:f2/5c/5c\x1b\\", "").found, [
+			{ index: 1, rgb: [242, 92, 92] },
+		]);
+	});
+
+	it("ignores OSC replies of other kinds", () => {
+		const scan = scanOsc4("\x1b]11;rgb:1c1c/1c1c/1c1c\x07", "");
+		assert.equal(scan.found.length, 0);
+		assert.equal(scan.rest, "\x1b]11;rgb:1c1c/1c1c/1c1c\x07");
+	});
+
+	it("extracts response and swallows the chunk", () => {
+		const scan = scanOsc4(cyan, "");
+		assert.equal(scan.rest, "");
+		assert.equal(scan.carry, "");
+	});
+
+	it("keeps user keystrokes that share the chunk", () => {
+		const scan = scanOsc4(`${cyan}abc`, "");
+		assert.equal(scan.found.length, 1);
+		assert.equal(scan.rest, "abc");
+	});
+
+	it("holds a partial response until the next chunk", () => {
+		const head = scanOsc4("\x1b]4;6;rgb:7a7a/aa", "");
+		assert.equal(head.found.length, 0);
+		assert.equal(head.carry, "\x1b]4;6;rgb:7a7a/aa");
+		assert.equal(head.rest, "");
+		const tail = scanOsc4("aa/ffff\x07", head.carry);
+		assert.deepEqual(tail.found, [{ index: 6, rgb: [122, 170, 255] }]);
+		assert.equal(tail.carry, "");
+	});
+
+	it("passes unrelated input through untouched", () => {
+		const scan = scanOsc4("\x1b[A", "");
+		assert.equal(scan.found.length, 0);
+		assert.equal(scan.rest, "\x1b[A");
+	});
+
+	it("does not hold a complete response as carry", () => {
+		const scan = scanOsc4(`${cyan}\x1b[1;5A`, "");
+		assert.equal(scan.found.length, 1);
+		assert.equal(scan.carry, "");
+		assert.equal(scan.rest, "\x1b[1;5A");
+	});
+});
+
+// ── gradientLevel (единое правило строк для GMAP/RGB_GMAP) ──
+describe("gradientLevel", () => {
+	it("maps rows to 4 shade levels", () => {
+		assert.equal(gradientLevel(1), 0);
+		assert.equal(gradientLevel(3), 0);
+		assert.equal(gradientLevel(4), 1);
+		assert.equal(gradientLevel(5), 2);
+		assert.equal(gradientLevel(6), 3);
+		assert.equal(gradientLevel(7), 3);
+	});
+});
+
+// ── accentOpenToRgb / themeAccentShades (/hc pi + /hm: градиент из акцента темы) ──
+describe("themeAccentShades", () => {
+	it("parses truecolor open code", () => {
+		assert.deepEqual(accentOpenToRgb("\x1b[38;2;100;150;200m"), [100, 150, 200]);
+	});
+
+	it("rejects non-truecolor and garbage", () => {
+		assert.equal(accentOpenToRgb("\x1b[38;5;129m"), null);
+		assert.equal(accentOpenToRgb("\x1b[39m"), null);
+		assert.equal(accentOpenToRgb(""), null);
+		assert.equal(accentOpenToRgb("\x1b[38;2;999;0;0m"), null);
+	});
+
+	it("builds 4 shades from theme accent", () => {
+		const shades = themeAccentShades({
+			getFgAnsi: () => "\x1b[38;2;100;150;200m",
+		});
+		assert.ok(shades !== null && shades.length === 4);
+		assert.equal(shades[0], "38;2;100;150;200");
+		// ×0.6 на самом тёмном уровне: 60;90;120
+		assert.equal(shades[3], "38;2;60;90;120");
+	});
+
+	it("falls back to null without truecolor accent", () => {
+		assert.equal(themeAccentShades({}), null);
+		assert.equal(
+			themeAccentShades({ getFgAnsi: () => "\x1b[38;5;129m" }),
+			null,
+		);
+		assert.equal(
+			themeAccentShades({
+				getFgAnsi: () => {
+					throw new Error("Unknown theme color");
+				},
+			}),
+			null,
+		);
 	});
 });
 

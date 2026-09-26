@@ -33,7 +33,7 @@ interface SettingsFile {
 }
 
 interface CCHeaderState {
-	logoColorKey: string;
+	logoColorKey: string; // "pi"=лого RGB + акцент темы Pi, иначе ключ CMAP/GMAP
 	versionColored: number; // 0=off 1=Pi only 2=Pi+ver
 	gradientOn: boolean;
 	stripeEnabled: boolean;
@@ -52,6 +52,8 @@ const LOGO_ROWS = 7;
 const LOGO_PIXEL_WIDTH = 14; // 8×2 双宽字符，含左右 margin
 export const MAX_SLOGAN_LENGTH = 85;
 // sync: COLOR_NAMES 与 CMAP/GMAP 共享同一组颜色键，新增颜色需同步三处。
+// 例外: "pi" — спецрежим без записей в CMAP/GMAP: Pi в RGB-цветах анимации,
+// акцент (полосы, версия, слоган) берётся из темы Pi через theme.fg("accent").
 const COLOR_NAMES: Record<string, string> = {
 	a: "anthropic",
 	c: "clawd",
@@ -62,6 +64,7 @@ const COLOR_NAMES: Record<string, string> = {
 	w: "white",
 	b: "blue",
 	p: "purple",
+	pi: "accent",
 };
 const DEFAULT_STATE: CCHeaderState = {
 	logoColorKey: "c",
@@ -272,6 +275,173 @@ const PIECE_RIGHT: [number, number][] = [
 	[2, 1],
 ];
 
+// P5-раскладка (финал анимации) в сумме равна WHITE_CELLS — чистый хелпер для /hc pi
+// key: `${y},${x}`, см. WHITE_CELLS/P5_* выше
+export function piLogoRgb(y: number, x: number): LogoColor {
+	const k = `${y},${x}`;
+	if (P5_CYAN.has(k)) return "cyan";
+	if (P5_RED.has(k)) return "red";
+	if (P5_GREEN.has(k)) return "green";
+	return "panel"; // fallback, недостижимо для клеток Pi
+}
+
+const isStripeCell = (y: number, x: number): boolean =>
+	state.stripeEnabled && y >= 2 && y <= LOGO_ROWS && x <= 6;
+
+// уровень градиента по строке — единый источник правила для GMAP/RGB_GMAP
+// (в logoCellColor используется как gradientLevel(y)+1 из-за l1..l4/s1..s4)
+export const gradientLevel = (y: number): number => {
+	if (y <= 3) return 0;
+	if (y === 4) return 1;
+	if (y === 5) return 2;
+	return 3;
+};
+
+type Rgb = [number, number, number];
+// множители яркости light→dark для градиентов, в духе GMAP
+const SHADE_FACTORS = [1, 0.87, 0.74, 0.6] as const;
+
+// 4 shade-кода градиента light→dark из базового RGB
+export const shadesFromRgb = (rgb: Rgb): string[] =>
+	SHADE_FACTORS.map(
+		(f) =>
+			`38;2;${Math.round(rgb[0] * f)};${Math.round(rgb[1] * f)};${Math.round(rgb[2] * f)}`,
+	);
+
+/* ── Палитра терминала (OSC 4) для градиента букв в /hc pi ──
+ * Базовый RGB 36/31/32 у каждой темы терминала свой, хардкодить его нельзя:
+ * при /hm выключенном буквы рисуются сырыми 36/31/32 и берут палитру терминала,
+ * а при /hm включённом 24-bit градиент обязан вырасти из того же цвета.
+ * Поэтому один раз спрашиваем терминал про индексы палитры 1/2/6 (red/green/cyan)
+ * и строим оттенки от ответа. Нет ответа (нет TTY, dumb-терминал, терминал без
+ * OSC 4) → piLogoShades остаётся null и буквы рисуются плоскими 36/31/32. */
+const PI_PALETTE_INDEX: Record<string, number> = {
+	red: 1,
+	green: 2,
+	cyan: 6,
+};
+const PALETTE_QUERY_TIMEOUT_MS = 250;
+// ответ приходит по одному индексу: "\x1b]4;6;rgb:7a7a/aaaa/ffff\x07" (BEL или ST)
+const OSC4_RESPONSE =
+	/\x1b\]4;(\d+);rgb:([0-9a-f]{1,4})\/([0-9a-f]{1,4})\/([0-9a-f]{1,4})(?:\x07|\x1b\\)/gi;
+// недописанный ответ в хвосте чанка — придерживаем до следующего чанка
+// (регексп deliberately без терминатора: ищем только начало OSC 4)
+const OSC4_PARTIAL_TAIL = /\x1b\]4;[^]*$/;
+
+// канал RGB: терминалы шлют 8 или 16 бит на канал (xterm — 16)
+const oscChannel = (hex: string): number =>
+	Math.round((parseInt(hex, 16) / (16 ** hex.length - 1)) * 255);
+
+// Разбор входного чанка: вырезает ответы OSC 4, не трогая остальной ввод.
+// carry — недописанный ответ из предыдущего чанка. Возвращает только то, что
+// нужно отдать pi-tui: rest уходит в компоненты, если пусто — чанк целиком
+// поглощается (consume), чтобы мусорный OSC не стал «нажатием клавиш».
+export function scanOsc4(
+	data: string,
+	carry: string,
+): { found: { index: number; rgb: Rgb }[]; rest: string; carry: string } {
+	const found: { index: number; rgb: Rgb }[] = [];
+	OSC4_RESPONSE.lastIndex = 0;
+	let m: RegExpExecArray | null;
+	while ((m = OSC4_RESPONSE.exec(carry + data)) !== null) {
+		found.push({
+			index: Number(m[1]),
+			rgb: [oscChannel(m[2]), oscChannel(m[3]), oscChannel(m[4])],
+		});
+	}
+	OSC4_RESPONSE.lastIndex = 0;
+	// сначала вырезаем полные ответы, и только потом ищем недописанный хвост —
+	// иначе хвост-регексп зацепил бы уже завершившийся ответ в начале чанка
+	let rest = (carry + data).replace(OSC4_RESPONSE, "");
+	const tail = rest.match(OSC4_PARTIAL_TAIL);
+	if (tail) {
+		rest = rest.slice(0, tail.index);
+		return { found, rest, carry: tail[0] };
+	}
+	return { found, rest, carry: "" };
+}
+
+// индекс палитры → имя цвета лого ("cyan" | "red" | "green")
+const PI_COLOR_BY_INDEX = new Map(
+	Object.entries(PI_PALETTE_INDEX).map(([name, index]) => [index, name]),
+);
+
+// null = палитра терминала неизвестна, буквы рисуются плоскими 36/31/32
+let piLogoShades: Record<string, string[]> | null = null;
+let piPaletteQueried = false;
+
+// Одноразовый запрос палитры. Регистрируем input-listener pi-tui, чтобы ответы
+// OSC 4 не утекли в компоненты как мусорный ввод: listener вырезает их из чанка
+// и возвращает остаток (чтобы не съесть нажатую пользователем клавишу).
+function queryPiPalette(tui: TUI): void {
+	if (piPaletteQueried) return;
+	if (!state.gradientOn || state.logoColorKey !== "pi") return;
+	piPaletteQueried = true;
+	// нет TTY / dumb-терминала / старого pi-tui без addInputListener → плоские 36/31/32
+	if (!process.stdout.isTTY || process.env.TERM === "dumb") return;
+	if (!tui.addInputListener || !tui.terminal) return;
+
+	const found: Record<string, string[]> = {};
+	let carry = "";
+
+	function finish(): void {
+		clearTimeout(timer);
+		dispose();
+		carry = "";
+		if (Object.keys(found).length === 0) return;
+		piLogoShades = found;
+		active?.reapply();
+	}
+
+	const dispose = tui.addInputListener((data) => {
+		const scan = scanOsc4(data, carry);
+		carry = scan.carry;
+		for (const { index, rgb } of scan.found) {
+			const name = PI_COLOR_BY_INDEX.get(index);
+			if (name) found[name] = shadesFromRgb(rgb);
+		}
+		if (Object.keys(found).length === Object.keys(PI_PALETTE_INDEX).length) {
+			finish();
+			return undefined;
+		}
+		// ответы OSC 4 вырезаны; остальное (в т.ч. недописанный хвост) — как есть
+		return scan.rest === data ? undefined : { data: scan.rest };
+	});
+
+	const timer = setTimeout(finish, PALETTE_QUERY_TIMEOUT_MS);
+	timer.unref?.();
+	tui.terminal?.write(
+		`\x1b]4;${Object.values(PI_PALETTE_INDEX).join(";?;")}?\x07`,
+	);
+}
+
+// theme.getFgAnsi("accent") отдаёт сырой открывающий ANSI-код. Парсим только
+// truecolor (38;2;r;g;b): на 256-цветном терминале эмулировать 24-bit градиент
+// нельзя, в этом случае themeAccentShades вернёт null и полосы рисуются плоским
+// theme.fg("accent")
+export function accentOpenToRgb(open: string): Rgb | null {
+	const m = open.match(/38;2;(\d{1,3});(\d{1,3});(\d{1,3})/);
+	if (!m) return null;
+	const rgb: Rgb = [+m[1], +m[2], +m[3]];
+	return rgb.every((v) => v >= 0 && v <= 255) ? rgb : null;
+}
+
+// 4 shade-кода градиента полос для /hc pi + /hm; null = недоступно (нет getFgAnsi
+// в старой Pi, акцент не truecolor) → плоский theme.fg("accent")
+export function themeAccentShades(theme: {
+	getFgAnsi?: (name: string) => string;
+}): string[] | null {
+	try {
+		const open = theme.getFgAnsi?.("accent");
+		if (!open) return null;
+		const rgb = accentOpenToRgb(open);
+		if (!rgb) return null;
+		return shadesFromRgb(rgb);
+	} catch {
+		return null;
+	}
+}
+
 export function logoCellColor(
 	frame: LogoFrame,
 	y: number,
@@ -298,19 +468,17 @@ export function logoCellColor(
 	)
 		return "green";
 
+	if (frame.phase === 6 && state.logoColorKey === "pi") {
+		// спецрежим /hc pi: Pi в RGB-цветах анимации; полосы акцентом темы
+		// рисуются вживую в PiHeader.piModeLines, здесь идут как panel
+		if (WHITE_CELLS.has(key)) return piLogoRgb(y, x);
+		return "panel";
+	}
 	if (frame.phase === 6) {
 		const isPi = WHITE_CELLS.has(key);
-		const lvl = state.gradientOn
-			? y <= 3
-				? 1
-				: y === 4
-					? 2
-					: y === 5
-						? 3
-						: 4
-			: 0;
+		const lvl = state.gradientOn ? gradientLevel(y) + 1 : 0;
 		if (isPi) return lvl > 0 ? (("l" + lvl) as LogoColor) : "logo";
-		return state.stripeEnabled && y >= 2 && y <= LOGO_ROWS && x <= 6
+		return isStripeCell(y, x)
 			? lvl > 0
 				? (("s" + lvl) as LogoColor)
 				: "logoStripe"
@@ -573,6 +741,8 @@ class PiHeader implements Component {
 	) {
 		cachedStats ??= computeStats(ctx);
 		this.stats = cachedStats!;
+		// палитра терминала нужна только для финального кадра /hc pi + /hm
+		queryPiPalette(tui);
 
 		if (skipAnimation) {
 			this.frame = LAST_FRAME_INDEX;
@@ -596,8 +766,13 @@ class PiHeader implements Component {
 	render(width: number): string[] {
 		const theme = this.ctx.ui.theme;
 		const muted = (s: string) => theme.fg("muted", s);
+		const accent = (s: string) => theme.fg("accent", s);
+		const isPiMode = state.logoColorKey === "pi";
 
-		const logoLines = PRECOMPUTED_LOGO_FRAMES[this.frame];
+		const logoLines =
+			isPiMode && this.frame === LAST_FRAME_INDEX
+				? this.piModeLines(theme)
+				: PRECOMPUTED_LOGO_FRAMES[this.frame];
 		const logoWidth = LOGO_PIXEL_WIDTH;
 		const infoMaxWidth = Math.max(0, width - LOGO_PIXEL_WIDTH);
 		// 性能: info 面板缓存——动画帧仅做拼接，不重算 padRight/truncateToWidth/visibleWidth
@@ -619,9 +794,13 @@ class PiHeader implements Component {
 
 			const piText =
 				state.versionColored >= 2
-					? `\x1b[${CMAP[state.logoColorKey]}mPi v${VERSION}\x1b[39m`
+					? isPiMode
+						? accent(`Pi v${VERSION}`)
+						: `\x1b[${CMAP[state.logoColorKey]}mPi v${VERSION}\x1b[39m`
 					: state.versionColored >= 1
-						? `\x1b[${CMAP[state.logoColorKey]}mPi\x1b[39m ${muted(`v${VERSION}`)}`
+						? isPiMode
+							? `${accent("Pi")} ${muted(`v${VERSION}`)}`
+							: `\x1b[${CMAP[state.logoColorKey]}mPi\x1b[39m ${muted(`v${VERSION}`)}`
 						: muted(`Pi v${VERSION}`);
 			const modelLine = `${model} · ${effort}${this.stats.agents ? `  |  ${this.stats.agents}` : ""}`;
 
@@ -635,7 +814,9 @@ class PiHeader implements Component {
 				? {
 						2: piText,
 						3: state.sloganColor
-							? `\x1b[1m\x1b[${CMAP[state.logoColorKey]}m${sloganText}\x1b[39m\x1b[22m`
+							? isPiMode
+								? accent(`\x1b[1m${sloganText}\x1b[22m`)
+								: `\x1b[1m\x1b[${CMAP[state.logoColorKey]}m${sloganText}\x1b[39m\x1b[22m`
 							: muted(`\x1b[1m${sloganText}\x1b[22m`),
 						4: muted(modelLine),
 						5: muted(statsLine),
@@ -656,6 +837,42 @@ class PiHeader implements Component {
 			lines.push(padRight(logoLines[i], logoWidth) + right);
 		}
 		return lines.map((l) => padRight(truncateToWidth(l, width, ""), width));
+	}
+
+	/** /hc pi: финал вживую — Pi в RGB анимации, полосы акцентом темы.
+	 * /hi показывает/прячет полосы; /hm даёт Minecraft-градиент: буквам — shade
+	 * цвета палитры терминала (OSC 4, null → плоские 36/31/32), полосам — shade
+	 * акцента темы (null → плоский акцент). */
+	piModeLines(theme: ExtensionContext["ui"]["theme"]): string[] {
+		const stripeShades = state.gradientOn ? themeAccentShades(theme) : null;
+		const lines: string[] = [];
+		for (let y = 1; y <= LOGO_ROWS; y++) {
+			let line = "";
+			const lvl = gradientLevel(y);
+			for (let x = 1; x <= LOGO_COLS; x++) {
+				const k = `${y},${x}`;
+				if (WHITE_CELLS.has(k)) {
+					const name = piLogoRgb(y, x);
+					const shades =
+						state.gradientOn && name !== "panel"
+							? piLogoShades?.[name]
+							: undefined;
+					line +=
+						shades !== undefined
+							? `\x1b[${shades[lvl]}m██\x1b[39m`
+							: colorCell(name);
+				} else if (isStripeCell(y, x)) {
+					line +=
+						stripeShades !== null
+							? `\x1b[${stripeShades[lvl]}m──\x1b[39m`
+							: theme.fg("accent", "──");
+				} else {
+					line += "  ";
+				}
+			}
+			lines.push(line);
+		}
+		return lines;
 	}
 
 	invalidate(): void {}
@@ -704,7 +921,7 @@ export function stateFromConfig(h: Record<string, unknown>): CCHeaderState {
 	return {
 		logoColorKey: pick(
 			h.color,
-			(v) => !!CMAP[v as string],
+			(v) => v === "pi" || !!CMAP[v as string],
 			DEFAULT_STATE.logoColorKey,
 		),
 		versionColored: pick(
@@ -816,7 +1033,7 @@ function updateState(
 	const msg = updater(state);
 	if (msg === null) return; // null = 中止（已自行 notify 错误）
 
-	// 脏标记：仅颜色/渐变/横线变化需要重算帧
+	// 脏标记：仅颜色/渐变/RGB/横线变化需要重算帧
 	if (
 		(!skipFrames && state.logoColorKey !== prevColor) ||
 		state.gradientOn !== prevGrad ||
@@ -1055,7 +1272,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerCommand("hc", {
 		description:
-			"Header color: <code> = set (c a r o y g w b p); no args = show color key",
+			"Header color: <code> = set (c a r o y g w b p pi); no args = show color key",
 		handler: async (args, ctx) => {
 			if (!args) {
 				ctx.ui.notify(
@@ -1072,15 +1289,15 @@ export default function (pi: ExtensionAPI) {
 				ctx,
 				(msg) => reapply(pi, ctx, readSettings(settingsPath), msg),
 				(s) => {
-					if (!CMAP[args]) {
+					if (!CMAP[args] && args !== "pi") {
 						ctx.ui.notify(
-							`Invalid color: "${args}". Available: ${Object.keys(CMAP).join(" ")}`,
+							`Invalid color: "${args}". Available: ${Object.keys(COLOR_NAMES).join(" ")}`,
 							"error",
 						);
 						return null;
 					}
 					s.logoColorKey = args;
-					return `Color: ${args}`;
+					return args === "pi" ? "Color: pi (logo RGB + theme accent)" : `Color: ${args}`;
 				},
 			);
 		},
